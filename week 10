@@ -1,0 +1,53 @@
+   // Dead-end detection
+    if (detect_dead_end(proximity_values)) {
+      if (!is_duplicate_dead_end(current_position)) {
+        printf("Dead End Detected at (%.2f, %.2f, %.2f), Light: %.2f\n",
+               current_position[0], current_position[1], current_position[2], average_light);
+
+        // Record the dead end
+        detected_dead_ends[dead_end_count++] = (DeadEnd){current_position[0], current_position[1], current_position[2]};
+
+        // Reverse and reorient
+        right_speed = -MAX_SPEED / 2;
+        left_speed = -MAX_SPEED / 2;
+        wb_motor_set_velocity(right_motor, right_speed);
+        wb_motor_set_velocity(left_motor, left_speed);
+        wb_robot_step(10 * TIME_STEP); // Reverse for some time
+
+        right_speed = MAX_SPEED;
+        left_speed = -MAX_SPEED;
+        wb_motor_set_velocity(right_motor, right_speed);
+        wb_motor_set_velocity(left_motor, left_speed);
+        wb_robot_step(15 * TIME_STEP); // Reorient
+      }
+    } else {
+      // Wall-following behavior
+      bool front_wall = proximity_values[7] > WALL_THRESHOLD;
+      bool left_wall = proximity_values[1] > WALL_THRESHOLD;
+
+      if (front_wall) {
+        right_speed = MAX_SPEED;
+        left_speed = -MAX_SPEED; // Turn right
+      } else if (left_wall) {
+        right_speed = MAX_SPEED;
+        left_speed = MAX_SPEED; // Go straight
+      } else {
+        right_speed = MAX_SPEED / 4;
+        left_speed = MAX_SPEED; // Turn left
+      }
+    }
+
+    // Smooth motor transitions and set speeds
+    right_speed = smooth_speed(right_speed, MAX_SPEED);
+    left_speed = smooth_speed(left_speed, MAX_SPEED);
+    wb_motor_set_velocity(right_motor, right_speed);
+    wb_motor_set_velocity(left_motor, left_speed);
+
+    // Print position and light intensity
+    printf("Position: (%.2f, %.2f, %.2f), Light: %.2f\n",
+           current_position[0], current_position[1], current_position[2], average_light);
+  }
+
+  wb_robot_cleanup();
+  return 0;
+}
