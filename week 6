@@ -1,0 +1,89 @@
+// Including necessary libraries
+#include <webots/robot.h>
+#include <webots/motor.h>
+#include <webots/distance_sensor.h>
+#include <webots/gps.h>
+#include <webots/light_sensor.h>
+#include <stdio.h>
+#include <stdbool.h>
+#include <math.h>
+
+// Constants definition
+#define TIME_STEP 64                // Time step for simulation
+#define MAX_SPEED 6.28              // Maximum motor speed
+#define NUM_SENSORS 8               // Number of proximity and light sensors
+#define WALL_THRESHOLD 80.0         // Threshold to detect walls
+#define DEAD_END_THRESHOLD 50.0     // Threshold for narrow spaces
+#define DEAD_END_PROXIMITY 0.1      // Distance to detect duplicate dead ends
+#define MAX_POSITIONS 5000          // Maximum number of recorded positions
+#define LIGHT_THRESHOLD 50.0        // Threshold for high light intensity
+
+#define SMOOTHING_FACTOR 0.07       // Factor for smoothing motor speed transitions
+
+// Structure to store position and light intensity
+typedef struct {
+  double x, y, z;                  // GPS coordinates
+  double light_intensity;          // Measured light intensity at position
+} PositionLightIntensity;
+
+PositionLightIntensity recorded_positions[MAX_POSITIONS];
+int recorded_position_count = 0;    // Counter for recorded positions
+
+// Structure to store detected dead ends
+typedef struct {
+  double x, y, z;                  // GPS coordinates of a dead end
+} DeadEnd;
+
+DeadEnd detected_dead_ends[25];
+int dead_end_count = 0;            // Counter for detected dead ends
+
+double initial_position[3] = {0};  // Robot's starting position
+
+// Function to smoothly transition motor speeds
+double smooth_speed(double current, double target) {
+  return current + SMOOTHING_FACTOR * (target - current);
+}
+
+// Function to calculate Euclidean distance between two 3D points
+double calculate_distance(const double *pos1, const double *pos2) {
+  return sqrt(pow(pos2[0] - pos1[0], 2) + pow(pos2[1] - pos1[1], 2) + pow(pos2[2] - pos1[2], 2));
+}
+
+// Check if the robot is back at its starting position
+bool is_back_at_start() {
+  const double *current_position = wb_gps_get_values(wb_robot_get_device("gps"));
+  double distance = calculate_distance(current_position, initial_position);
+  return distance < 0.5;  // Allowable error margin for GPS precision
+}
+
+// Determine if the current position is a dead end
+bool detect_dead_end(double proximity_values[]) {
+  bool front_wall = proximity_values[7] > WALL_THRESHOLD;
+  bool left_wall = proximity_values[1] > DEAD_END_THRESHOLD;
+  bool right_wall = proximity_values[5] > DEAD_END_THRESHOLD;
+
+  // Dead end detected if walls are on three sides
+  if (front_wall && left_wall && right_wall) {
+    return true;
+  }
+
+  // Check for narrow passage dead end
+  if ((left_wall && right_wall) && !front_wall) {
+    double front_distance = proximity_values[7];
+    if (front_distance > WALL_THRESHOLD && front_distance < DEAD_END_THRESHOLD) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Check if the current dead end is already recorded
+bool is_duplicate_dead_end(const double *position) {
+  for (int i = 0; i < dead_end_count; i++) {
+    double distance = calculate_distance(position, 
+                          (double[]){detected_dead_ends[i].x, detected_dead_ends[i].y, detected_dead_ends[i].z});
+    if (distance < DEAD_END_PROXIMITY) {
+      return true;
+    }
+  }
+  return false;
