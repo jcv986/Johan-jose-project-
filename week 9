@@ -185,32 +185,4 @@ int main(int argc, char **argv) {
     }
     double average_light = light_sum / NUM_SENSORS;
 
-    // Check for dead ends
-    if (detect_dead_end(proximity_values)) {
-      if (!is_duplicate_dead_end(current_position)) {
-        detected_dead_ends[dead_end_count].x = current_position[0];
-        detected_dead_ends[dead_end_count].y = current_position[1];
-        detected_dead_ends[dead_end_count].z = current_position[2];
-        dead_end_count++;
-        printf("Dead-End Detected at (%.2f, %.2f, %.2f), Light Intensity: %.2f\n", 
-               current_position[0], current_position[1], current_position[2], average_light);
-      }
-    } else {
-      printf("Position: (%.2f, %.2f, %.2f), Light Intensity: %.2f\n", 
-             current_position[0], current_position[1], current_position[2], average_light);
-    }
 
-    // Record the position and light intensity
-    if (recorded_position_count < MAX_POSITIONS) {
-      recorded_positions[recorded_position_count].x = current_position[0];
-      recorded_positions[recorded_position_count].y = current_position[1];
-      recorded_positions[recorded_position_count].z = current_position[2];
-      recorded_positions[recorded_position_count].light_intensity = average_light;
-      recorded_position_count++;
-    }
-  }
-
-  wb_robot_cleanup();
-  return 0;
-}
-       
