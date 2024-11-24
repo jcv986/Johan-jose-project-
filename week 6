@@ -56,34 +56,3 @@ bool is_back_at_start() {
   return distance < 0.5;  // Allowable error margin for GPS precision
 }
 
-// Determine if the current position is a dead end
-bool detect_dead_end(double proximity_values[]) {
-  bool front_wall = proximity_values[7] > WALL_THRESHOLD;
-  bool left_wall = proximity_values[1] > DEAD_END_THRESHOLD;
-  bool right_wall = proximity_values[5] > DEAD_END_THRESHOLD;
-
-  // Dead end detected if walls are on three sides
-  if (front_wall && left_wall && right_wall) {
-    return true;
-  }
-
-  // Check for narrow passage dead end
-  if ((left_wall && right_wall) && !front_wall) {
-    double front_distance = proximity_values[7];
-    if (front_distance > WALL_THRESHOLD && front_distance < DEAD_END_THRESHOLD) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Check if the current dead end is already recorded
-bool is_duplicate_dead_end(const double *position) {
-  for (int i = 0; i < dead_end_count; i++) {
-    double distance = calculate_distance(position, 
-                          (double[]){detected_dead_ends[i].x, detected_dead_ends[i].y, detected_dead_ends[i].z});
-    if (distance < DEAD_END_PROXIMITY) {
-      return true;
-    }
-  }
-  return false;
