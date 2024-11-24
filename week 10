@@ -1,53 +1,58 @@
-   // Dead-end detection
-    if (detect_dead_end(proximity_values)) {
-      if (!is_duplicate_dead_end(current_position)) {
-        printf("Dead End Detected at (%.2f, %.2f, %.2f), Light: %.2f\n",
-               current_position[0], current_position[1], current_position[2], average_light);
-
-        // Record the dead end
-        detected_dead_ends[dead_end_count++] = (DeadEnd){current_position[0], current_position[1], current_position[2]};
-
-        // Reverse and reorient
-        right_speed = -MAX_SPEED / 2;
-        left_speed = -MAX_SPEED / 2;
-        wb_motor_set_velocity(right_motor, right_speed);
-        wb_motor_set_velocity(left_motor, left_speed);
-        wb_robot_step(10 * TIME_STEP); // Reverse for some time
-
-        right_speed = MAX_SPEED;
-        left_speed = -MAX_SPEED;
-        wb_motor_set_velocity(right_motor, right_speed);
-        wb_motor_set_velocity(left_motor, left_speed);
-        wb_robot_step(15 * TIME_STEP); // Reorient
-      }
-    } else {
-      // Wall-following behavior
-      bool front_wall = proximity_values[7] > WALL_THRESHOLD;
-      bool left_wall = proximity_values[1] > WALL_THRESHOLD;
-
-      if (front_wall) {
-        right_speed = MAX_SPEED;
-        left_speed = -MAX_SPEED; // Turn right
-      } else if (left_wall) {
-        right_speed = MAX_SPEED;
-        left_speed = MAX_SPEED; // Go straight
-      } else {
-        right_speed = MAX_SPEED / 4;
-        left_speed = MAX_SPEED; // Turn left
-      }
+// Function to check if a dead end is already detected near the current position
+bool is_duplicate_dead_end(const double *position) {
+  for (int i = 0; i < num_dead_ends; i++) { // Loop through all previously detected dead ends
+    double dist = distance_between_points(position, (double[]){detected_dead_ends[i].x, detected_dead_ends[i].y, detected_dead_ends[i].z}); // Calculate distance
+    if (dist < DEAD_END_PROXIMITY_THRESHOLD) { // If a dead end is within proximity, it's a duplicate
+      return true;
     }
+  }
+  return false; // No duplicate dead end found
+}
 
-    // Smooth motor transitions and set speeds
-    right_speed = smooth_speed(right_speed, MAX_SPEED);
-    left_speed = smooth_speed(left_speed, MAX_SPEED);
-    wb_motor_set_velocity(right_motor, right_speed);
-    wb_motor_set_velocity(left_motor, left_speed);
+// Function to check if the robot has reached a target position
+bool is_at_max(const double *target_position, const PositionLightIntensity *best_position) {
+  double dist = distance_between_points(target_position, (double[]){best_position->x, best_position->y, best_position->z}); // Calculate distance to target
+  return dist < 0.01; // If the distance is less than 0.01, the robot has reached the target
+}
 
-    // Print position and light intensity
-    printf("Position: (%.2f, %.2f, %.2f), Light: %.2f\n",
-           current_position[0], current_position[1], current_position[2], average_light);
+// Main function
+int main(int argc, char **argv) {
+  wb_robot_init(); // Initialize the robot
+
+  WbDeviceTag right_motor = wb_robot_get_device("right wheel motor"); // Get the right motor
+  WbDeviceTag left_motor = wb_robot_get_device("left wheel motor"); // Get the left motor
+  wb_motor_set_position(right_motor, INFINITY); // Set motors to unlimited position control
+  wb_motor_set_position(left_motor, INFINITY);
+  wb_motor_set_velocity(right_motor, 0.0); // Set initial motor velocities to 0
+  wb_motor_set_velocity(left_motor, 0.0);
+
+  WbDeviceTag prox_sensors[8]; // Array for proximity sensors
+  char prox_sensor_name[50];
+  for (int ind = 0; ind < 8; ++ind) { // Enable each proximity sensor
+    sprintf(prox_sensor_name, "ps%d", ind);
+    prox_sensors[ind] = wb_robot_get_device(prox_sensor_name);
+    wb_distance_sensor_enable(prox_sensors[ind], TIME_STEP);
   }
 
-  wb_robot_cleanup();
-  return 0;
-}
+  WbDeviceTag gps = wb_robot_get_device("gps"); // Get the GPS device
+  wb_gps_enable(gps, TIME_STEP); // Enable GPS
+
+  WbDeviceTag light_sensors[NUM_SENSORS]; // Array for light sensors
+  char sensor_name[5];
+  for (int i = 0; i < NUM_SENSORS; i++) { // Enable each light sensor
+    sprintf(sensor_name, "ls%d", i);
+    light_sensors[i] = wb_robot_get_device(sensor_name);
+    wb_light_sensor_enable(light_sensors[i], TIME_STEP);
+  }
+
+  double right_speed = MAX_SPEED; // Set initial speed
+  double left_speed = MAX_SPEED;
+
+  const double *initial_gps_position = NULL;
+  while (true) {
+    initial_gps_position = wb_gps_get_values(gps); // Get GPS position
+    if (initial_gps_position != NULL && !isnan(initial_gps_position[0]) && !isnan(initial_gps_position[1]) && !isnan(initial_gps_position[2])) { // Check if valid GPS data is available
+      break;
+    }
+    wb_robot_step(TIME_STEP); // Step forward until valid position is found
+  }
