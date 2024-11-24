@@ -1,30 +1,63 @@
-// Including necessary libraries
+//initalizing library 
 #include <webots/robot.h>
 #include <webots/motor.h>
 #include <webots/distance_sensor.h>
-#include <webots/gps.h>
-#include <webots/light_sensor.h>
 #include <stdio.h>
-#include <stdbool.h>
-#include <math.h>
 
-// Constants definition
-#define TIME_STEP 64                // Time step for simulation
-#define MAX_SPEED 6.28              // Maximum motor speed
-#define NUM_SENSORS 8               // Number of proximity and light sensors
-#define WALL_THRESHOLD 80.0         // Threshold to detect walls
-#define DEAD_END_THRESHOLD 50.0     // Threshold for narrow spaces
-#define DEAD_END_PROXIMITY 0.1      // Distance to detect duplicate dead ends
-#define MAX_POSITIONS 5000          // Maximum number of recorded positions
-#define LIGHT_THRESHOLD 50.0        // Threshold for high light intensity
+//initializing speed and time
+#define TIME_STEP 64
+#define MAX_SPEED 6.28
+#define PROX_SENSOR_COUNT 8
 
-#define SMOOTHING_FACTOR 0.07       // Factor for smoothing motor speed transitions
+// initializing sensors
+void init_sensors(WbDeviceTag prox_sensors[]) {
+  char prox_sensor_name[50];
+  for (int i = 0; i < PROX_SENSOR_COUNT; ++i) {
+    sprintf(prox_sensor_name, "ps%d", i);
+    prox_sensors[i] = wb_robot_get_device(prox_sensor_name);
+    wb_distance_sensor_enable(prox_sensors[i], TIME_STEP);
+  }
+}
 
-// Structure to store position and light intensity
-typedef struct {
-  double x, y, z;                  // GPS coordinates
-  double light_intensity;          // Measured light intensity at position
-} PositionLightIntensity;
+// initializing motors
+void init_motors(WbDeviceTag left_motor, WbDeviceTag right_motor) {
+  wb_motor_set_position(left_motor, INFINITY);
+  wb_motor_set_position(right_motor, INFINITY);
+  wb_motor_set_velocity(left_motor, 0.0);
+  wb_motor_set_velocity(right_motor, 0.0);
+}
 
-PositionLightIntensity recorded_positions[MAX_POSITIONS];
-int recorded_position_count = 0;    // Counter for recorded positions
+// sensor values function
+void read_sensors(WbDeviceTag prox_sensors[], bool *right_wall, bool *right_corner, bool *front_wall) {
+  *right_wall = wb_distance_sensor_get_value(prox_sensors[2]) > 80;    // Right wall sensor
+  *right_corner = wb_distance_sensor_get_value(prox_sensors[1]) > 80;  // Front-right corner sensor
+  *front_wall = wb_distance_sensor_get_value(prox_sensors[0]) > 80;    // Front sensor
+}
+
+// motor speed function
+void set_motor_speeds(WbDeviceTag left_motor, WbDeviceTag right_motor, double left_speed, double right_speed) {
+  wb_motor_set_velocity(left_motor, left_speed);
+  wb_motor_set_velocity(right_motor, right_speed);
+}
+
+int main(int argc, char **argv) {
+  wb_robot_init();
+  
+  // Initializing motors again
+  WbDeviceTag left_motor = wb_robot_get_device("left wheel motor");
+  WbDeviceTag right_motor = wb_robot_get_device("right wheel motor");
+  init_motors(left_motor, right_motor);
+
+  // Initializing distance sensors
+  WbDeviceTag prox_sensors[PROX_SENSOR_COUNT];
+  init_sensors(prox_sensors);
+
+  double left_speed = MAX_SPEED;
+  double right_speed = MAX_SPEED;
+  
+  bool right_wall, right_corner, front_wall;
+
+  while (wb_robot_step(TIME_STEP) != -1) {
+  
+    read_sensors(prox_sensors, &right_wall, &right_corner, &front_wall);
+    
