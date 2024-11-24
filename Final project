@@ -1,4 +1,4 @@
-// Including necessary libraries
+// Including libraries
 #include <webots/robot.h>
 #include <webots/motor.h>
 #include <webots/distance_sensor.h>
@@ -8,67 +8,92 @@
 #include <stdbool.h>
 #include <math.h>
 
-// Constants definition
+// Defining constants
 #define TIME_STEP 64
 #define MAX_SPEED 6.28
 #define NUM_SENSORS 8
-#define WALL_THRESHOLD 80.0
-#define DEAD_END_THRESHOLD 50.0
-#define DEAD_END_PROXIMITY 0.1
+#define WALL_THRESHOLD 75.0
+#define DEAD_END_THRESHOLD 45.0
+#define DEAD_END_PROXIMITY_THRESHOLD 0.1
 #define MAX_POSITIONS 5000
-#define LIGHT_THRESHOLD 50.0
-#define SMOOTHING_FACTOR 0.07
+#define LIGHT_INTENSITY_THRESHOLD 55.0
+#define SMOOTHING_FACTOR 0.05
 
-// Structure to store position and light intensity
+// Structs and global variables
 typedef struct {
-  double x, y, z;
+  double x;
+  double y;
+  double z;
   double light_intensity;
 } PositionLightIntensity;
 
 PositionLightIntensity recorded_positions[MAX_POSITIONS];
-int recorded_position_count = 0;
+int num_recorded_positions = 0;
 
-// Structure to store detected dead ends
 typedef struct {
-  double x, y, z;
+  double x;
+  double y;
+  double z;
 } DeadEnd;
 
 DeadEnd detected_dead_ends[25];
-int dead_end_count = 0;
+int num_dead_ends = 0;
 
-// Calculate Euclidean distance between two 3D points
-double calculate_distance(const double *pos1, const double *pos2) {
+double initial_position[3] = {0.0, 0.0, 0.0};
+
+// Utilities
+double smooth_speed(double current_speed, double target_speed) {
+  return current_speed + SMOOTHING_FACTOR * (target_speed - current_speed);
+}
+
+double distance_between_points(const double *pos1, const double *pos2) {
   return sqrt(pow(pos2[0] - pos1[0], 2) + pow(pos2[1] - pos1[1], 2) + pow(pos2[2] - pos1[2], 2));
 }
 
-// Detect dead end based on proximity values
-bool detect_dead_end(double proximity_values[]) {
-  return (proximity_values[7] > WALL_THRESHOLD &&
-          proximity_values[1] > DEAD_END_THRESHOLD &&
-          proximity_values[5] > DEAD_END_THRESHOLD);
+bool is_back_at_start() {
+  const double *current_position = wb_gps_get_values(wb_robot_get_device("gps"));
+  double dist = distance_between_points(current_position, initial_position);
+  return dist < 0.5;
 }
 
-// Check if the current position is a duplicate dead end
+bool is_dead_end(double prox_values[]) {
+  bool front_wall = prox_values[7] > WALL_THRESHOLD;
+  bool left_wall = prox_values[1] > DEAD_END_THRESHOLD;
+  bool right_wall = prox_values[5] > DEAD_END_THRESHOLD;
+
+  if (front_wall && left_wall && right_wall) {
+    return true;
+  }
+
+  if ((left_wall && right_wall) && !front_wall) {
+    double front_distance = prox_values[7];
+    if (front_distance > WALL_THRESHOLD && front_distance < DEAD_END_THRESHOLD) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 bool is_duplicate_dead_end(const double *position) {
-  for (int i = 0; i < dead_end_count; i++) {
-    double distance = calculate_distance(position,
-                          (double[]){detected_dead_ends[i].x, detected_dead_ends[i].y, detected_dead_ends[i].z});
-    if (distance < DEAD_END_PROXIMITY) {
+  for (int i = 0; i < num_dead_ends; i++) {
+    double dist = distance_between_points(position, (double[]){detected_dead_ends[i].x, detected_dead_ends[i].y, detected_dead_ends[i].z});
+    if (dist < DEAD_END_PROXIMITY_THRESHOLD) {
       return true;
     }
   }
   return false;
 }
 
-// Smooth transition for motor speeds
-double smooth_speed(double current, double target) {
-  return current + SMOOTHING_FACTOR * (target - current);
+bool is_at_max(const double *target_position, const PositionLightIntensity *best_position) {
+  double dist = distance_between_points(target_position, (double[]){best_position->x, best_position->y, best_position->z});
+  return dist < 0.01;
 }
 
-int main() {
+// Main function
+int main(int argc, char **argv) {
   wb_robot_init();
 
-  // Set up motors
   WbDeviceTag right_motor = wb_robot_get_device("right wheel motor");
   WbDeviceTag left_motor = wb_robot_get_device("left wheel motor");
   wb_motor_set_position(right_motor, INFINITY);
@@ -76,93 +101,155 @@ int main() {
   wb_motor_set_velocity(right_motor, 0.0);
   wb_motor_set_velocity(left_motor, 0.0);
 
-  // Set up sensors
-  WbDeviceTag proximity_sensors[8], light_sensors[NUM_SENSORS], gps;
-  char sensor_name[50];
-
-  for (int i = 0; i < 8; i++) {
-    sprintf(sensor_name, "ps%d", i);
-    proximity_sensors[i] = wb_robot_get_device(sensor_name);
-    wb_distance_sensor_enable(proximity_sensors[i], TIME_STEP);
+  WbDeviceTag prox_sensors[8];
+  char prox_sensor_name[50];
+  for (int ind = 0; ind < 8; ++ind) {
+    sprintf(prox_sensor_name, "ps%d", ind);
+    prox_sensors[ind] = wb_robot_get_device(prox_sensor_name);
+    wb_distance_sensor_enable(prox_sensors[ind], TIME_STEP);
   }
 
+  WbDeviceTag gps = wb_robot_get_device("gps");
+  wb_gps_enable(gps, TIME_STEP);
+
+  WbDeviceTag light_sensors[NUM_SENSORS];
+  char sensor_name[5];
   for (int i = 0; i < NUM_SENSORS; i++) {
     sprintf(sensor_name, "ls%d", i);
     light_sensors[i] = wb_robot_get_device(sensor_name);
     wb_light_sensor_enable(light_sensors[i], TIME_STEP);
   }
 
-  gps = wb_robot_get_device("gps");
-  wb_gps_enable(gps, TIME_STEP);
-
-  // Initialize motor speeds and robot's initial position
   double right_speed = MAX_SPEED;
   double left_speed = MAX_SPEED;
 
-  // Main control loop
-  while (wb_robot_step(TIME_STEP) != -1) {
-    double proximity_values[8], light_sum = 0.0;
-    const double *current_position = wb_gps_get_values(gps);
+  const double *initial_gps_position = NULL;
+  while (true) {
+    initial_gps_position = wb_gps_get_values(gps);
+    if (initial_gps_position != NULL && !isnan(initial_gps_position[0]) && !isnan(initial_gps_position[1]) && !isnan(initial_gps_position[2])) {
+      break;
+    }
+    wb_robot_step(TIME_STEP);
+  }
 
-    // Read proximity sensor values
-    for (int i = 0; i < 8; i++) {
-      proximity_values[i] = wb_distance_sensor_get_value(proximity_sensors[i]);
+  initial_position[0] = initial_gps_position[0];
+  initial_position[1] = initial_gps_position[1];
+  initial_position[2] = initial_gps_position[2];
+
+  printf("Initial Position: (%.2f, %.2f, %.2f)\n--Exploring Maze--\n", initial_position[0], initial_position[1], initial_position[2]);
+
+  double start_check_time = wb_robot_get_time() + 27;
+
+  while (wb_robot_step(TIME_STEP) != -1) {
+    if (wb_robot_get_time() >= start_check_time) {
+      if (is_back_at_start()) {
+        printf("Back at start. Stopping.\n--Completed a Round of the Maze--\n");
+        double pause_time = wb_robot_get_time() + 3.0;
+        while (wb_robot_get_time() < pause_time) {
+          wb_robot_step(TIME_STEP);
+        }
+
+        double max_light_intensity = -1.0;
+        PositionLightIntensity best_position = {0.0, 0.0, 0.0, 0.0};
+        for (int i = 0; i < num_recorded_positions; i++) {
+          if (recorded_positions[i].light_intensity > max_light_intensity && recorded_positions[i].light_intensity > LIGHT_INTENSITY_THRESHOLD) {
+            max_light_intensity = recorded_positions[i].light_intensity;
+            best_position = recorded_positions[i];
+          }
+        }
+
+        if (max_light_intensity > -1.0) {
+          printf("Moving to position with highest light intensity: (%.2f, %.2f, %.2f)\n", best_position.x, best_position.y, best_position.z);
+
+          const double *target_position = wb_gps_get_values(gps);
+          while (distance_between_points(target_position, (double *)&best_position) > 0.2) {
+            target_position = wb_gps_get_values(gps);
+
+            double prox_values[8];
+            for (int i = 0; i < 8; ++i) {
+              prox_values[i] = wb_distance_sensor_get_value(prox_sensors[i]);
+            }
+
+            bool front_wall = prox_values[7] > WALL_THRESHOLD;
+            bool left_wall = prox_values[1] > WALL_THRESHOLD;
+
+            if (front_wall) {
+              right_speed = MAX_SPEED;
+              left_speed = -MAX_SPEED;
+            } else if (left_wall) {
+              right_speed = MAX_SPEED;
+              left_speed = MAX_SPEED;
+            } else {
+              right_speed = MAX_SPEED / 8;
+              left_speed = MAX_SPEED;
+            }
+
+            right_speed = smooth_speed(right_speed, MAX_SPEED);
+            left_speed = smooth_speed(left_speed, MAX_SPEED);
+
+            wb_motor_set_velocity(right_motor, right_speed);
+            wb_motor_set_velocity(left_motor, left_speed);
+
+            if (is_at_max(target_position, &best_position)) {
+              break;
+            }
+
+            wb_robot_step(TIME_STEP);
+          }
+
+          wb_motor_set_velocity(left_motor, 0.0);
+          wb_motor_set_velocity(right_motor, 0.0);
+          printf("===Reached the position with the highest light intensity: (%.2f, %.2f, %.2f)===\n", best_position.x, best_position.y, best_position.z);
+        }
+
+        break;
+      } else {
+        start_check_time = wb_robot_get_time() + 27;
+      }
     }
 
-    // Read light sensor values
+    double prox_values[8];
+    for (int i = 0; i < 8; ++i) {
+      prox_values[i] = wb_distance_sensor_get_value(prox_sensors[i]);
+    }
+
+    bool front_wall = prox_values[7] > WALL_THRESHOLD;
+    bool left_wall = prox_values[1] > WALL_THRESHOLD;
+
+    if (front_wall) {
+      right_speed = MAX_SPEED;
+      left_speed = -MAX_SPEED;
+    } else if (left_wall) {
+      right_speed = MAX_SPEED;
+      left_speed = MAX_SPEED;
+    } else {
+      right_speed = MAX_SPEED / 8;
+      left_speed = MAX_SPEED;
+    }
+
+    right_speed = smooth_speed(right_speed, MAX_SPEED);
+    left_speed = smooth_speed(left_speed, MAX_SPEED);
+
+    const double *position = wb_gps_get_values(gps);
+    double light_sum = 0.0;
     for (int i = 0; i < NUM_SENSORS; i++) {
       light_sum += wb_light_sensor_get_value(light_sensors[i]);
     }
-    double average_light = light_sum / NUM_SENSORS;
+    light_sum /= NUM_SENSORS;
 
-    // Dead-end detection
-    if (detect_dead_end(proximity_values)) {
-      if (!is_duplicate_dead_end(current_position)) {
-        printf("Dead End Detected at (%.2f, %.2f, %.2f), Light: %.2f\n",
-               current_position[0], current_position[1], current_position[2], average_light);
+    if (num_recorded_positions < MAX_POSITIONS) {
+      recorded_positions[num_recorded_positions++] = (PositionLightIntensity){position[0], position[1], position[2], light_sum};
+    }
 
-        // Record the dead end
-        detected_dead_ends[dead_end_count++] = (DeadEnd){current_position[0], current_position[1], current_position[2]};
-
-        // Reverse and reorient
-        right_speed = -MAX_SPEED / 2;
-        left_speed = -MAX_SPEED / 2;
-        wb_motor_set_velocity(right_motor, right_speed);
-        wb_motor_set_velocity(left_motor, left_speed);
-        wb_robot_step(10 * TIME_STEP); // Reverse for some time
-
-        right_speed = MAX_SPEED;
-        left_speed = -MAX_SPEED;
-        wb_motor_set_velocity(right_motor, right_speed);
-        wb_motor_set_velocity(left_motor, left_speed);
-        wb_robot_step(15 * TIME_STEP); // Reorient
-      }
-    } else {
-      // Wall-following behavior
-      bool front_wall = proximity_values[7] > WALL_THRESHOLD;
-      bool left_wall = proximity_values[1] > WALL_THRESHOLD;
-
-      if (front_wall) {
-        right_speed = MAX_SPEED;
-        left_speed = -MAX_SPEED; // Turn right
-      } else if (left_wall) {
-        right_speed = MAX_SPEED;
-        left_speed = MAX_SPEED; // Go straight
-      } else {
-        right_speed = MAX_SPEED / 4;
-        left_speed = MAX_SPEED; // Turn left
+    if (is_dead_end(prox_values) && !is_duplicate_dead_end(position)) {
+      printf("position: (%.2f, %.2f, %.2f)\n", position[0], position[1], position[2]);
+      if (num_dead_ends < 25) {
+        detected_dead_ends[num_dead_ends++] = (DeadEnd){position[0], position[1], position[2]};
       }
     }
 
-    // Smooth motor transitions and set speeds
-    right_speed = smooth_speed(right_speed, MAX_SPEED);
-    left_speed = smooth_speed(left_speed, MAX_SPEED);
     wb_motor_set_velocity(right_motor, right_speed);
     wb_motor_set_velocity(left_motor, left_speed);
-
-    // Print position and light intensity
-    printf("Position: (%.2f, %.2f, %.2f), Light: %.2f\n",
-           current_position[0], current_position[1], current_position[2], average_light);
   }
 
   wb_robot_cleanup();
