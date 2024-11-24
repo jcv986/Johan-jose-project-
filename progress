@@ -1,0 +1,20 @@
+
+// Structure to store detected dead ends
+typedef struct {
+  double x, y, z;
+} DeadEnd;
+
+DeadEnd detected_dead_ends[25];
+int dead_end_count = 0;
+
+// Calculate Euclidean distance between two 3D points
+double calculate_distance(const double *pos1, const double *pos2) {
+  return sqrt(pow(pos2[0] - pos1[0], 2) + pow(pos2[1] - pos1[1], 2) + pow(pos2[2] - pos1[2], 2));
+}
+
+// Detect dead end based on proximity values
+bool detect_dead_end(double proximity_values[]) {
+  return (proximity_values[7] > WALL_THRESHOLD &&
+          proximity_values[1] > DEAD_END_THRESHOLD &&
+          proximity_values[5] > DEAD_END_THRESHOLD);
+}
